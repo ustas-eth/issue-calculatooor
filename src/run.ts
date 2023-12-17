@@ -145,7 +145,7 @@ for (const issue of issues) {
     '' +
     severitySorting[issueSeverities[id]] +
     issueInternalIds[id] +
-    (mainIssues.has(primary) ? 'a' : 'b') +
+    (mainIssues.has(id) ? 'a' : 'b') +
     author
 
   parsed.push([
