@@ -9,7 +9,7 @@ The current version has the same problems, which I'll try to solve if needed.
 
 ## Requirements
 - NodeJS v20
-- GitHub personal key with the `repo` permission
+- GitHub personal key with the `repo` permission - [CREATE HERE](https://github.com/settings/tokens)
 - Access to C4 findings repositories
 
 ## How to run
