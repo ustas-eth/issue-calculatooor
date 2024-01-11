@@ -2,10 +2,10 @@
 Makes your life easier
 
 KenzoAgada's [GISFAC](https://github.com/KenzoAgada/gisfac) was taken as a base.
-The current version has the same problems, which I'll try to solve if needed.
 
 ## Features
 - Support of the Analysis reports
+- Calculation of rewards for H/M issues
 
 ## Requirements
 - NodeJS v20
@@ -18,6 +18,7 @@ The current version has the same problems, which I'll try to solve if needed.
 ```env
 GH_API_TOKEN=ghp_yourpersonaltoken
 REPO=code-423n4/some-repo-findings
+HM_POT=1000000
 ```
 3. Run `yarn start`
 4. Drink a tea...
@@ -25,6 +26,5 @@ REPO=code-423n4/some-repo-findings
 
 ## TODO
 - make logs nicer
-- fix the algo issues
 
 The repo is under the MIT license; feel free to use it!

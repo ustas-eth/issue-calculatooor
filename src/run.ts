@@ -2,15 +2,16 @@ import moment from 'moment'
 import { getFromGithub } from './requests.js'
 import {
   extractSeverityFromLabels,
+  generateInternalId,
   getLabels,
+  getPrimaryIssueId,
+  getPrimaryIssueReport,
   includesLabels,
-  initCounter,
-  isInvalid,
   partialScoring,
-  primaryFromDuplicate,
 } from './utils.js'
 import { createArrayCsvWriter } from 'csv-writer'
 import { existsSync, mkdirSync } from 'fs'
+import { Report, Severity } from './Report.js'
 
 const REPO = process.env.REPO!
 
@@ -26,8 +27,83 @@ console.log('Total commits number:', commits.length)
 
 console.log('Processing...')
 
-const issueAuthor: { [index: string]: any } = {}
+const reports = new Map<number, Report>()
+const mainIssuesIdCounter = new Map<Severity, number>()
+const internalIdCounters = new Map<string, number>()
 
+/**
+ * Create basic reports for every issue
+ */
+for (const issue of issues) {
+  const id = issue.number
+  const labels = getLabels(issue)
+
+  if (labels.length === 0 || issue.title === 'Agreements & Disclosures')
+    continue
+
+  let severity = extractSeverityFromLabels(labels)
+  let internalId = 'NONE'
+  let main = false
+
+  if (
+    severity !== Severity.INVALID &&
+    severity !== Severity.WITHDRAWN &&
+    severity !== Severity.UNKNOWN &&
+    !includesLabels(labels, ['duplicate'])
+  ) {
+    main = true
+    internalId = generateInternalId(severity, mainIssuesIdCounter)
+
+    const current = internalIdCounters.get(internalId) || 0
+    internalIdCounters.set(internalId, current + 1)
+  }
+
+  const report = new Report(
+    id,
+    issue.title,
+    internalId,
+    severity,
+    issue.html_url,
+    labels,
+    main,
+  )
+
+  reports.set(report.id, report)
+}
+
+for (const [, report] of reports) {
+  const { severity, labels } = report
+
+  if (
+    severity !== Severity.INVALID &&
+    severity !== Severity.WITHDRAWN &&
+    severity !== Severity.UNKNOWN &&
+    includesLabels(labels, ['duplicate'])
+  ) {
+    const primary = getPrimaryIssueReport(labels, reports)
+
+    if (primary && primary.main) {
+      report.severity = primary.severity
+      report.internalId = primary.internalId
+
+      internalIdCounters.set(
+        report.internalId,
+        (internalIdCounters.get(report.internalId) || 0) + 1,
+      )
+    } else {
+      report.severity = Severity.INVALID
+      report.internalId = 'INVALID'
+    }
+  }
+}
+
+/**
+ * Parse commits to get all the authors of the issues
+ *
+ * During the initialization of a findings repo c4-submissions account
+ * creates commits with the following pattern: author issue #1234.
+ * We want to create a mapping from issue number -> author.
+ */
 for (const commit of commits) {
   const message = commit['commit']['message']
 
@@ -40,68 +116,18 @@ for (const commit of commits) {
 
   const split = message.split(' issue #')
 
-  if (split.length == 2) issueAuthor[split[1]] = split[0]
-}
-
-const issueSeverities: { [index: string]: string } = {}
-const issueInternalIds: { [index: string]: any } = {}
-const mainIssuesIdCounter = initCounter()
-const mainIssues = new Set()
-
-for (const issue of issues) {
-  const id = issue.number
-  const labels = getLabels(issue)
-  const severity = extractSeverityFromLabels(labels)
-
-  if (labels.length === 0 || severity === undefined) continue
-
-  if (
-    !isInvalid(labels) &&
-    !includesLabels(labels, ['duplicate', 'withdrawn']) &&
-    issue.title != 'Agreements & Disclosures'
-  ) {
-    mainIssues.add(id)
-    issueSeverities[id] = severity
-
-    const currentNumber = mainIssuesIdCounter.get(severity)!
-    const inString = String(currentNumber).padStart(3, '0')
-
-    issueInternalIds[id] = `${severity[0]}-${inString}`
-    mainIssuesIdCounter.set(severity, currentNumber + 1)
+  if (split.length == 2) {
+    const report = reports.get(parseInt(split[1]))
+    if (report) report.author = split[0]
   }
 }
 
-console.log('Number of severities: ', mainIssuesIdCounter)
-
-for (const issue of issues) {
-  const id = issue.number
-  const labels = getLabels(issue)
-
-  if (labels.length === 0) continue
-
-  if (mainIssues.has(id)) {
-    continue
-  } else if (includesLabels(labels, ['withdrawn'])) {
-    issueSeverities[id] = 'WITHDRAWN'
-    issueInternalIds[id] = 'WITHDRAWN'
-  } else if (isInvalid(labels)) {
-    issueSeverities[id] = 'INVALID'
-    issueInternalIds[id] = 'INVALID'
-  } else if (includesLabels(labels, ['duplicate'])) {
-    const primary = primaryFromDuplicate(labels)
-
-    if (mainIssues.has(primary)) {
-      issueSeverities[id] = issueSeverities[primary]
-      issueInternalIds[id] = issueInternalIds[primary]
-    } else {
-      issueSeverities[id] = 'INVALID'
-      issueInternalIds[id] = 'INVALID'
-    }
-  } else {
-    issueSeverities[id] = 'UNKNOWN'
-    issueInternalIds[id] = 'UNKNOWN'
-  }
-}
+console.log(`Totals:
+High: ${mainIssuesIdCounter.get(Severity.High)}
+Medium: ${mainIssuesIdCounter.get(Severity.Medium)}
+QA: ${mainIssuesIdCounter.get(Severity.QA)}
+Gas: ${mainIssuesIdCounter.get(Severity.Gas)}
+Analysis: ${mainIssuesIdCounter.get(Severity.Analysis)}`)
 
 const severitySorting: { [index: string]: number } = {
   High: 0,
@@ -114,56 +140,77 @@ const severitySorting: { [index: string]: number } = {
   UNKNOWN: 7,
 }
 
-const parsed = []
+let hmShares = 0
 
-for (const issue of issues) {
-  const id = issue.number
-  const labels = getLabels(issue)
-  const author = issueAuthor[id] || ''
+for (const [, report] of reports) {
+  const { labels, severity } = report
+  const duplicates = internalIdCounters.get(report.internalId) || 1
 
-  if (labels.length === 0 || issue.title === 'Agreements & Disclosures')
-    continue
-
-  let primary = primaryFromDuplicate(labels)
-  if (mainIssues.has(primary)) primary = issueInternalIds[primary]
-
-  let weight
-  if (
-    issueSeverities[id] !== 'INVALID' &&
-    issueSeverities[id] !== 'WITHDRAWN'
-  ) {
-    weight = 1
+  if (severity !== Severity.INVALID && severity !== Severity.WITHDRAWN) {
+    report.weight = 1
 
     const selected = includesLabels(labels, ['selected for report'])
     const partial = partialScoring(labels)
 
-    if (selected) weight = 1.3
-    else if (partial) weight = partial
+    if (selected) report.weight = 1.3
+    else if (partial) report.weight = partial
+  }
+
+  const weight = report.weight
+  if (severity === Severity.High) {
+    report.shares = 10 * (0.9 ** (duplicates - 1) / duplicates) * weight
+    hmShares += report.shares
+  } else if (severity === Severity.Medium) {
+    report.shares = 10 * (0.9 ** (duplicates - 1) / duplicates) * weight
+    hmShares += report.shares
+  } else {
+    report.shares *= weight
+  }
+}
+
+const parsed = []
+const totals = {
+  rewards: 0,
+  percents: 0,
+}
+
+for (const [id, report] of reports) {
+  const { title, internalId, labels, main, severity, url, weight, shares } =
+    report
+  const author = report.author || ''
+
+  const primary = getPrimaryIssueId(labels, reports)
+
+  if (severity === Severity.High || severity === Severity.Medium) {
+    totals.rewards += (shares / hmShares) * parseInt(process.env.HM_POT!)
+    totals.percents += shares / hmShares
+    report.reward = (shares / hmShares) * parseInt(process.env.HM_POT!)
   }
 
   const sortingField =
-    '' +
-    severitySorting[issueSeverities[id]] +
-    issueInternalIds[id] +
-    (mainIssues.has(id) ? 'a' : 'b') +
-    author
+    '' + severitySorting[severity] + internalId + (main ? 'a' : 'b') + author
 
   parsed.push([
+    sortingField,
     id,
-    issueInternalIds[id],
-    primary || undefined,
-    issue.title,
+    internalId,
+    primary,
+    title,
     author,
     weight,
-    issueSeverities[id],
-    issue['html_url'],
+    shares,
+    report.reward.toFixed(2),
+    severity,
+    url,
     labels,
-    sortingField,
   ])
 }
 
-parsed.sort((a, b) => (a[9] < b[9] ? -1 : 1))
-parsed.forEach((e) => e.pop())
+console.log(hmShares)
+console.log(totals)
+
+parsed.sort((a, b) => (a[0]! < b[0]! ? -1 : 1))
+parsed.forEach((e) => e.shift())
 
 const date = moment().format('DD-MM-YY--HH-mm-ss')
 const filename = `out/${REPO.split('/')[1]}--${date}.csv`
@@ -182,6 +229,8 @@ const writer = createArrayCsvWriter({
     'title',
     'warden',
     'weight',
+    'shares',
+    'reward',
     'severity',
     'url',
     'labels',
