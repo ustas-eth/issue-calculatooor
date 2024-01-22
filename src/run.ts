@@ -161,7 +161,7 @@ for (const [, report] of reports) {
     report.shares = 10 * (0.9 ** (duplicates - 1) / duplicates) * weight
     hmShares += report.shares
   } else if (severity === Severity.Medium) {
-    report.shares = 10 * (0.9 ** (duplicates - 1) / duplicates) * weight
+    report.shares = 3 * (0.9 ** (duplicates - 1) / duplicates) * weight
     hmShares += report.shares
   } else {
     report.shares *= weight
