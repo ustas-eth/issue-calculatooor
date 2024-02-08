@@ -102,7 +102,6 @@ for (const [, report] of reports) {
  *
  * During the initialization of a findings repo c4-submissions account
  * creates commits with the following pattern: author issue #1234.
- * We want to create a mapping from issue number -> author.
  */
 for (const commit of commits) {
   const message = commit['commit']['message']
@@ -142,6 +141,9 @@ const severitySorting: { [index: string]: number } = {
 
 let hmShares = 0
 
+/**
+ * Calculate weights and shares
+ */
 for (const [, report] of reports) {
   const { labels, severity } = report
   const duplicates = internalIdCounters.get(report.internalId) || 1
@@ -174,6 +176,9 @@ const totals = {
   percents: 0,
 }
 
+/**
+ * Calculate rewards and create an array from the reports
+ */
 for (const [id, report] of reports) {
   const { title, internalId, labels, main, severity, url, weight, shares } =
     report
@@ -209,9 +214,15 @@ for (const [id, report] of reports) {
 console.log(hmShares)
 console.log(totals)
 
+/**
+ * Sort the array of reports
+ */
 parsed.sort((a, b) => (a[0]! < b[0]! ? -1 : 1))
 parsed.forEach((e) => e.shift())
 
+/**
+ * Write all the entries to a csv file
+ */
 const date = moment().format('DD-MM-YY--HH-mm-ss')
 const filename = `out/${REPO.split('/')[1]}--${date}.csv`
 
