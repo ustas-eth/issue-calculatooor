@@ -3,7 +3,7 @@
     "start": "node --loader ts-node/esm --env-file=.env --no-warnings ./src/run.ts"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.6.0"
   },
   "type": "module",
   "devDependencies": {
